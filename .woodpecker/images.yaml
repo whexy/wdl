@@ -1,0 +1,84 @@
+# Fork-owned image build for whexy/clusters-work (gitops/apps/wdl,
+# docs/wdl.md there). Builds the two upstream images from this fork's own
+# tree, unmodified Dockerfiles included, and pushes them to the private
+# ghcr.io/whexy/wdl-{workerd,rust} packages. Runs only for release tags the
+# fork owner pushes (git push origin wdl.YYYYMMDD.N); never for branches or
+# pull requests, so no untrusted change reaches the GHCR token.
+#
+# Upstream's .github/workflows/release.yml targets Docker Hub through
+# getwdl/builder and does not run here.
+when:
+  - event: tag
+    ref: refs/tags/wdl.*
+
+labels:
+  platform: linux/amd64
+
+variables:
+  - &amd64
+    kubernetes:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+  - &buildx
+    kubernetes:
+      nodeSelector:
+        kubernetes.io/arch: amd64
+      resources:
+        requests:
+          cpu: "2"
+          memory: 4Gi
+        limits:
+          cpu: "4"
+          memory: 6Gi
+  - &publish
+    registry: ghcr.io
+    username: whexy
+    password:
+      from_secret: ghcr_token
+    context: .
+    platforms: linux/amd64
+    tags:
+      - ${CI_COMMIT_TAG}
+    build_args:
+      WDL_VERSION: ${CI_COMMIT_TAG}
+      VCS_REF: ${CI_COMMIT_SHA}
+      BUILD_DATE: ${CI_PIPELINE_CREATED}
+    default_labels: false
+    labels:
+      - org.opencontainers.image.source=${CI_REPO_URL}
+      - org.opencontainers.image.revision=${CI_COMMIT_SHA}
+      - org.opencontainers.image.version=${CI_COMMIT_TAG}
+    provenance: false
+    # The cluster's pod network runs over Tailscale (MTU 1230).
+    mtu: 1230
+    storage_path: /woodpecker/docker
+
+clone:
+  - name: git
+    image: woodpeckerci/plugin-git
+    backend_options: *amd64
+
+steps:
+  # The Dockerfiles copy licenses/third-party/; upstream generates it first.
+  - name: licenses
+    image: node:24-bookworm-slim
+    backend_options: *amd64
+    commands:
+      - npm ci --ignore-scripts --no-audit --no-fund
+      - npm run build:third-party-licenses
+
+  - name: publish-workerd
+    image: woodpeckerci/plugin-docker-buildx:6.1.2
+    backend_options: *buildx
+    settings:
+      <<: *publish
+      repo: ghcr.io/whexy/wdl-workerd
+      dockerfile: Dockerfile.workerd
+
+  - name: publish-rust
+    image: woodpeckerci/plugin-docker-buildx:6.1.2
+    backend_options: *buildx
+    settings:
+      <<: *publish
+      repo: ghcr.io/whexy/wdl-rust
+      dockerfile: Dockerfile.rust
