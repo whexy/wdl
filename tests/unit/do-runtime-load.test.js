@@ -299,6 +299,37 @@ test("DO runtime wrapper aliases legal class names without declaration collision
   }
 });
 
+test("DO runtime wrapper re-exports the user default export for ctx.exports.default", async () => {
+  const shimUrl = moduleDataUrl(`
+    export function wrapDurableObjectClass(Base) {
+      return class extends Base {};
+    }
+  `);
+  const importWrapped = async (/** @type {string} */ userSource) => {
+    const injections = Object.fromEntries(doRuntimeInjectedModuleSources("worker.js", {
+      bindings: { ROOM: { type: "do", className: "Room" } },
+    }, "export function wrapDurableObjectClass() {}"));
+    const userUrl = moduleDataUrl(userSource);
+    const source = applyModuleReplacements(injections[DO_RUNTIME_RESERVED_MODULE], [
+      ['from "./_wdl-do-alarm-shim.js"', `from ${JSON.stringify(shimUrl)}`],
+      [/from "\.\/worker\.js"/g, `from ${JSON.stringify(userUrl)}`],
+    ]);
+    return { wrapped: await import(moduleDataUrl(source)), user: await import(userUrl) };
+  };
+
+  const withDefault = await importWrapped(`
+    export class Room {}
+    export class Other {}
+    export default { fetch() { return "default-fetch"; } };
+  `);
+  assert.equal(withDefault.wrapped.default, withDefault.user.default);
+  assert.equal(withDefault.wrapped.Other, withDefault.user.Other);
+
+  const withoutDefault = await importWrapped("export class Room {}");
+  assert.ok(Object.hasOwn(withoutDefault.wrapped, "default"));
+  assert.equal(withoutDefault.wrapped.default, undefined);
+});
+
 test("DO runtime load: rejects reserved alarm shim module collisions", async () => {
   /** @type {any} */ (globalThis).__doLoadResponses.push(jsonLoadResponse(200, {
     bundle: {

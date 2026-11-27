@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Fixed `ctx.exports.default` inside Durable Objects: the do-runtime wrapper now re-exports the Worker's default export, so DO self-loopback through the default handler works as in stock workerd.
+
 ## wdl.20261116.1 - 2026-11-17
 
 - Updated workerd and Workers types to `1.20261116.1` and `5.20261116.1`, raising the maximum compatibility date to `2026-11-23`. Includes native lifecycle, stream, SQLite and DOMException fixes, Node crypto/Console updates, and already-due timer scheduling fixes. Static worker dates are unchanged; upstream autogate retirements take effect without configuration changes. No WDL state migration is required.

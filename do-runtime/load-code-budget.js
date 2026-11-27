@@ -44,6 +44,9 @@ import { wrapDurableObjectClass as __WdlWrapDurableObjectClass__ } from ${alarmS
 
 import * as __WdlUserModule__ from ${userMain};
 export * from ${userMain};
+// \`export *\` skips \`default\`; ctx.exports.default needs it. A namespace read
+// keeps a main module without a default export linkable.
+export default __WdlUserModule__.default;
 
 ${wrappedClasses}
 `;

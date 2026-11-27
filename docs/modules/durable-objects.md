@@ -106,6 +106,11 @@ requests discard tenant-supplied `x-request-id` values and propagate the sanitiz
 context id when available. Request ids remain best-effort, untrusted diagnostic
 metadata.
 
+The generated do-runtime wrapper re-exports every user module export, including
+`default`, so `ctx.exports` inside a Durable Object matches the Worker's exports and
+`ctx.exports.default` loops back to the Worker's default handler. The loopback handler
+receives the same host-wrapped env as any other entrypoint.
+
 DO invoke envelopes identify persisted bundles by canonical namespace, worker, version,
 and storage id. They do not accept inline worker source.
 
