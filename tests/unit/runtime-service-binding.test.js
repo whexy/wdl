@@ -28,14 +28,30 @@ const { ServiceBinding } = await importRepositoryModule("runtime/bindings/servic
      };`
   ],
   [
+    /import \{ serveAssetBeforeWorker \} from "runtime-assets";/,
+    `const serveAssetBeforeWorker = async (args) => {
+       const state = /** @type {any} */ (globalThis).__serviceBindingAssets;
+       state.calls.push(args);
+       if (state.error) throw state.error;
+       return state.response;
+     };`
+  ],
+  [
     /import \{ fetchTailFields, startTailEnvelope \} from "runtime-tail-forwarder";/,
     `const fetchTailFields = () => ({});
-     const startTailEnvelope = () => ({ finish() {}, finishError() {} });`
+     const startTailEnvelope = () => {
+       const tails = /** @type {any} */ (globalThis).__serviceBindingAssets.tails;
+       return {
+         finish(fields) { tails.push(["finish", fields.status]); },
+         finishError(err) { tails.push(["error", err.message]); },
+       };
+     };`
   ],
 ]);
 
 function resetLoaderCallbackOptions() {
   /** @type {any} */ (globalThis).__serviceBindingLoaderCallbackOptions = [];
+  /** @type {any} */ (globalThis).__serviceBindingAssets = { calls: [], response: null, error: null, tails: [] };
 }
 
 function loaderCallbackOptions() {
@@ -77,14 +93,14 @@ function makeMockLoader() {
   };
 }
 
-function makeServiceBinding() {
+function makeServiceBinding(/** @type {string | null} */ targetEntrypoint = "Api") {
   return new ServiceBinding({
     props: {
       callerNs: "caller-ns",
       targetNs: "target-ns",
       targetWorker: "api",
       targetVersion: "v1",
-      targetEntrypoint: "Api",
+      targetEntrypoint,
     },
   }, {
     LOADER: makeMockLoader(),
@@ -126,6 +142,57 @@ test("ServiceBinding fetch strips caller-supplied platform forwarding headers", 
   assert.equal(result.workerId, "target-ns:api:v1");
   assert.equal(result.workerPrefix, null);
   assert.equal(result.internalAuth, null);
+});
+
+test("ServiceBinding fetch into the default entrypoint is answered by target assets first", async () => {
+  resetLoaderCallbackOptions();
+  const assets = /** @type {any} */ (globalThis).__serviceBindingAssets;
+  assets.response = new Response("asset", { status: 200 });
+
+  const response = await makeServiceBinding(null).fetch(new Request("https://worker.workers.example/app.css", {
+    headers: { "x-worker-id": "caller:forged:v1" },
+  }));
+
+  assert.equal(await response.text(), "asset");
+  assert.deepEqual(assets.tails, [["finish", 200]]);
+  assert.equal(assets.calls.length, 1);
+  assert.deepEqual(assets.calls[0].identity, { ns: "target-ns", worker: "api", version: "v1" });
+  assert.equal(assets.calls[0].request.headers.get("x-worker-id"), "target-ns:api:v1");
+  assert.equal(loaderCallbackOptions().length, 0);
+});
+
+test("ServiceBinding fetch reports target asset failures through the target tail", async () => {
+  resetLoaderCallbackOptions();
+  const assets = /** @type {any} */ (globalThis).__serviceBindingAssets;
+  assets.error = new Error("Invalid assets manifest for target-ns:api:v1");
+
+  await assert.rejects(
+    makeServiceBinding(null).fetch(new Request("https://worker.workers.example/app.css")),
+    /Invalid assets manifest/
+  );
+  assert.deepEqual(assets.tails, [["error", "Invalid assets manifest for target-ns:api:v1"]]);
+  assert.equal(loaderCallbackOptions().length, 0);
+});
+
+test("ServiceBinding fetch falls through to the default entrypoint on asset miss", async () => {
+  resetLoaderCallbackOptions();
+
+  const response = await makeServiceBinding("default").fetch(new Request("https://worker.workers.example/api"));
+  const result = await readJsonResponse(response, 200);
+
+  assert.equal(result.name, "default");
+  assert.equal(/** @type {any} */ (globalThis).__serviceBindingAssets.calls.length, 1);
+});
+
+test("ServiceBinding fetch into a named entrypoint skips asset routing", async () => {
+  resetLoaderCallbackOptions();
+  /** @type {any} */ (globalThis).__serviceBindingAssets.response = new Response("asset");
+
+  const response = await makeServiceBinding("Api").fetch(new Request("https://worker.workers.example/app.css"));
+  const result = await readJsonResponse(response, 200);
+
+  assert.equal(result.name, "Api");
+  assert.equal(/** @type {any} */ (globalThis).__serviceBindingAssets.calls.length, 0);
 });
 
 test("ServiceBinding fetch cold-load propagates request id when present", async () => {

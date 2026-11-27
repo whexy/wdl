@@ -25,6 +25,7 @@ export default [
         // workerd-specific
         WorkerEntrypoint: "readonly",
         WebSocketPair: "readonly",
+        FixedLengthStream: "readonly",
       },
     },
     rules: {

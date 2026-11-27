@@ -22,6 +22,7 @@ configMapGenerator:
       - WORKFLOWS_PORT=9120
       - REDIS_PROXY_PORT=7070
       - ASSETS_CDN_BASE=http://localhost:30900/wdl-assets
+      - ASSETS_ORIGIN_BASE=http://s3mock:9090/wdl-assets
       - S3_ENDPOINT=http://s3mock:9090
       - S3_BUCKET=wdl-assets
       - S3_REGION=us-east-1

@@ -100,7 +100,7 @@ Binding 是 tenant capability 的主要 surface：
 - Workflows facade 调 workflows；workflows 拥有 DB 2 state，并不信任 tenant body 中的 identity 字段。
 - R2 在 runtime 使用平台 S3-compatible credential；tenant code 拿到 R2 binding，而不是 raw credential。
 - AI 暴露 generated facade，credential 保持 host-only。redis-proxy 只生成三个官方 adapter 的精确 destination；runtime 再次校验 destination、丢弃 tenant authorization/endpoint header、拒绝 redirect，并只通过 public-only `AI_NETWORK` service 发送 provider traffic。
-- ASSETS 只暴露 `env.ASSETS.url(path)` 生成 tokenized CDN URL；runtime 不暴露 assets 的 S3 credential 或 bytes。
+- ASSETS 由 host code 对 public-read asset origin 发起匿名 `GET` 读取 asset bytes；任何 runtime 都不持有 ASSETS bucket credential，tenant code 只看到 `env.ASSETS.fetch()` 的响应和 tokenized `env.ASSETS.url()` URL。
 - Service 和 platform binding 从 control metadata 与 ACL 解析；跨 namespace service call 需要 target-side authorization。
 - Secret 只在 runtime `env` 构造时 materialize 成 plaintext。At rest 时，`secrets:<ns>` 和 `secrets:<ns>:<worker>` hash value 是 envelope ciphertext；Redis snapshot 和 debug read 不应暴露 tenant secret plaintext。
 

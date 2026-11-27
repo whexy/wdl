@@ -127,7 +127,7 @@ WDL 遵循 Wrangler selected-env 继承规则：
 | `[vars]` | 接受 string、number、boolean，并 stringified 进 `env`；vars、namespace/worker secrets、runtime 注入的 binding env value 和 binding-scoped Workflow identity props 必须落在 WDL 留有 headroom 的 workerd 1 MiB `workerLoader` env budget 内。 |
 | `[[kv_namespaces]]` | `id` 是 platform-local KV namespace id，不是 Cloudflare UUID。 |
 | `[[r2_buckets]]` | `binding` 加 `bucket_name` 映射为平台 S3 bucket 下的 namespace-scoped virtual R2 bucket。 |
-| `[assets]` | `directory` 内容上传到 S3-compatible assets storage，并 auto-inject `ASSETS`。 |
+| `[assets]` | `directory` 内容上传到 S3-compatible assets storage，并 auto-inject `ASSETS`；runtime 在 Worker 之前按 Cloudflare 默认值提供它们。`run_worker_first` 被接受但不转发，因此始终按 `false` 生效：每个声明的 asset 都在 Worker 之前公开。 |
 | `[[d1_databases]]` | Binding 优先按 `database_id` 解析，其次按 namespace-local `database_name`；migration 使用匹配的配置。 |
 | `[[durable_objects.bindings]]` | 支持 `[[migrations]].new_classes` 或 `new_sqlite_classes` 中的 same-worker class；不支持 `script_name` 和 rename/delete migration。 |
 | `[[services]]` | 在 caller deploy 时冻结 target namespace、worker、version 和 entrypoint。Cross-namespace `ns` 是 WDL extension，需要 target opt in。 |

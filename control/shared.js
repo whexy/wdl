@@ -7,6 +7,7 @@ import { makeR2AdminClient } from "control-r2";
 import { extractToken } from "shared-auth-token";
 import { validatePrincipalShape } from "shared-auth-roles";
 import { queueStreamKey } from "shared-queue-keys";
+import { ASSETS_MANIFEST_FIELD } from "shared-assets-manifest";
 import { internalErrorResponse, jsonError, jsonResponse, sanitizeJsonErrorDetails } from "shared-respond";
 import { withInternalAuth } from "shared-internal-auth";
 import { errorMessage } from "shared-errors";
@@ -483,11 +484,12 @@ export async function publishReload(requestId) {
 /**
  * @param {BundleCommitMulti} multi
  * @param {string} key
- * @param {{ meta: unknown, normalized: Iterable<[string, Uint8Array | string]> }} bundle
+ * @param {{ meta: unknown, normalized: Iterable<[string, Uint8Array | string]>, assetsManifest?: string }} bundle
  */
-export function stageBundleCommit(multi, key, { meta, normalized }) {
+export function stageBundleCommit(multi, key, { meta, normalized, assetsManifest }) {
   multi.del(key);
   for (const [path, bytes] of normalized) multi.hSet(key, path, bytes);
+  if (assetsManifest !== undefined) multi.hSet(key, ASSETS_MANIFEST_FIELD, assetsManifest);
   multi.hSet(key, "__meta__", JSON.stringify(meta));
 }
 

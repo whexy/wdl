@@ -344,6 +344,7 @@ const { commitWithWatch, handle } = await importControlHandler("control/handlers
     "shared-auth-roles": sharedAuthRolesUrl,
     "control-s3": controlS3Url,
     "shared-assets-token": sharedAssetsUrl,
+    "shared-assets-manifest": repositoryFileUrl("shared/assets-manifest.js"),
     "control-d1-store": d1StoreUrl,
     "control-env-budget": controlEnvBudgetUrl,
     "control-worker-code-budget": controlWorkerCodeBudgetUrl,

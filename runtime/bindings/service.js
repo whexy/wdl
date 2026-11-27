@@ -10,6 +10,7 @@
 
 import { WorkerEntrypoint } from "cloudflare:workers";
 import { getLoadedWorkerStub } from "runtime-load";
+import { serveAssetBeforeWorker } from "runtime-assets";
 import { fetchTailFields, startTailEnvelope } from "runtime-tail-forwarder";
 import { INTERNAL_AUTH_HEADER } from "shared-internal-auth";
 import { sanitizeRequestId } from "shared-observability";
@@ -80,7 +81,20 @@ export class ServiceBinding extends WorkerEntrypoint {
       fields: () => fetchTailFields(forwarded),
     });
     try {
-      const response = await targetStub(self, requestId)
+      // Cloudflare's asset router fronts only the default entrypoint.
+      const asset = targetEntrypoint == null || targetEntrypoint === "default"
+        ? await serveAssetBeforeWorker({
+          env: /** @type {import("runtime-assets").AssetsEnv} */ (/** @type {unknown} */ (self.env)),
+          ctx: self.ctx,
+          request: forwarded,
+          identity: {
+            ns: self.ctx.props.targetNs,
+            worker: self.ctx.props.targetWorker,
+            version: self.ctx.props.targetVersion,
+          },
+        })
+        : null;
+      const response = asset ?? await targetStub(self, requestId)
         .getEntrypoint(targetEntrypoint ?? null, targetEntrypointOpts(self))
         .fetch(forwarded);
       tail.finish({

@@ -60,6 +60,12 @@ import {
 } from "shared-ns-pattern";
 import { putAsset, inferContentType } from "control-s3";
 import { generateAssetsToken, assetsPrefixFor } from "shared-assets-token";
+import {
+  MAX_ASSETS_MANIFEST_BYTES,
+  assetEtag,
+  buildAssetsManifest,
+  utf8ByteLength,
+} from "shared-assets-manifest";
 import { resolveDatabaseRefFrom } from "control-d1-store";
 import {
   WorkerEnvBudgetError,
@@ -163,7 +169,7 @@ function deployAbortLogContext(details) {
  * @typedef {JsonObject & { bindings?: BindingMap, workflows?: JsonObject[] }} PreparedMeta
  * @typedef {JsonObject & { name: string, className: string, workflowKey?: string }} WorkflowMeta
  * @typedef {JsonObject & { bindings: BindingMap, workflows?: WorkflowMeta[] }} CommittedMeta
- * @typedef {{ normalized: NormalizedModule[], meta: PreparedMeta }} PreparedBundle
+ * @typedef {{ normalized: NormalizedModule[], meta: PreparedMeta, assetsManifest?: string }} PreparedBundle
  * @typedef {{ prefix: string, token: string }} AssetsMeta
  * @typedef {{ prepared: PreparedBundle, assetsMeta?: AssetsMeta, outgoingRefs: OutgoingRef[], d1Refs: DeployD1Ref[] }} CommittedBundle
  * @typedef {RedisMulti} DeployCommitMulti
@@ -280,7 +286,7 @@ function prepareDeployRequest({ body, ns, platformDomain }) {
   try {
     assetsToUpload = normalizeAssets(body.assets);
   } catch (err) {
-    throw invalidDeployRequest(errorMessage(err));
+    throw deployRequestErrorFromUnknown(err);
   }
 
   let routes;
@@ -944,6 +950,22 @@ export async function handle({ request, env, ns, name, requestId }) {
     return deployAssetsS3NotConfiguredResponse(warningDetails);
   }
 
+  if (parsed.deployRequest.assetsToUpload && assetsMeta) {
+    const manifest = await buildDeployAssetsManifest(
+      assetsMeta.prefix,
+      parsed.deployRequest.assetsToUpload
+    );
+    const manifestBytes = utf8ByteLength(manifest);
+    if (manifestBytes > MAX_ASSETS_MANIFEST_BYTES) {
+      return deployRequestErrorResponse(new DeployRequestError(
+        413,
+        "assets_manifest_too_large",
+        `assets manifest is ${manifestBytes} bytes; the limit is ${MAX_ASSETS_MANIFEST_BYTES} (fewer files or shorter paths)`
+      ), warningDetails);
+    }
+    prepared.assetsManifest = manifest;
+  }
+
   const num = await redis.incr(nextVersionKey(ns, name));
   const version = formatVersion(num);
 
@@ -993,6 +1015,20 @@ export async function handle({ request, env, ns, name, requestId }) {
     sessionPolicy: parsed.deployRequest.sessionPolicy,
     ...(warnings.length ? { warnings } : {}),
   });
+}
+
+/**
+ * @param {string} prefix
+ * @param {Array<[string, Uint8Array]>} assetsToUpload
+ */
+async function buildDeployAssetsManifest(prefix, assetsToUpload) {
+  const entries = await Promise.all(assetsToUpload.map(async ([path, bytes]) => ({
+    path,
+    contentType: inferContentType(path),
+    etag: await assetEtag(bytes),
+    size: bytes.byteLength,
+  })));
+  return buildAssetsManifest(prefix, entries);
 }
 
 // Cleanup-intent failure is appended to `warnings`; the caller still
@@ -1359,6 +1395,7 @@ function stageDeployCommit(multi, {
   stageBundleCommit(multi, bundleKey(ns, name, version), {
     meta: committedMeta,
     normalized: prepared.normalized,
+    assetsManifest: prepared.assetsManifest,
   });
   if (doStorageId) multi.set(doStorageIdKey(ns, name), doStorageId, { nx: true });
   for (const [key, field, value] of workflowDefUpdates) multi.hSet(key, field, value);

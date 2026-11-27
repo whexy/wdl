@@ -61,6 +61,7 @@ export const SLOW_FIRST_FILES = [
   "http-features.test.js",
   "routing-admin.test.js",
   "service-bindings.test.js",
+  "assets-serving.test.js",
   "assets-binding.test.js",
   "pages-assets-demo.test.js",
   "cli-workers-dev-optout.test.js",

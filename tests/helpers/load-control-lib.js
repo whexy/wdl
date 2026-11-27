@@ -83,6 +83,7 @@ export async function compileControlGraph(opts = {}) {
       "shared-ns-pattern": SHARED_NS_URL,
       "base64.js": SHARED_BASE64_URL,
       "shared-workerd-compat-flags": SHARED_WORKERD_COMPAT_FLAGS_URL,
+      "shared-assets-manifest": repositoryFileUrl("shared/assets-manifest.js"),
       "control-lib": libUrl,
       "control-workflow-definitions": workflowDefinitionsUrl,
     }),

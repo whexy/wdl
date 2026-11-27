@@ -227,8 +227,9 @@ Bindings are the main tenant capability surface:
   generates one of three exact official destinations; runtime revalidates it, discards
   tenant authorization/endpoint headers, rejects redirects, and sends provider traffic
   only through the public-only `AI_NETWORK` service.
-- ASSETS only exposes `env.ASSETS.url(path)` for tokenized CDN URLs; runtime does not
-  expose S3 credentials or bytes for assets.
+- ASSETS reads asset bytes with an anonymous `GET` from host code against the
+  public-read asset origin; no runtime holds ASSETS bucket credentials, and tenant code
+  sees only `env.ASSETS.fetch()` responses and tokenized `env.ASSETS.url()` URLs.
 - Service and platform bindings are resolved from control metadata and ACLs;
   cross-namespace service calls require target-side authorization.
 - Secrets are materialized as plaintext only at runtime `env` construction. At rest,
