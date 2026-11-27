@@ -68,8 +68,14 @@ steps:
     image: node:24-bookworm-slim
     backend_options: *amd64
     commands:
-      - npm ci --ignore-scripts --no-audit --no-fund
-      - npm run build:third-party-licenses
+      - |
+        export RUSTUP_TOOLCHAIN="$(awk -F '"' '/^channel = / { print $2; exit }' rust/rust-toolchain.toml)"
+        test -n "$RUSTUP_TOOLCHAIN"
+        curl --proto '=https' --tlsv1.2 -fsS https://sh.rustup.rs -o /tmp/rustup-init.sh
+        sh /tmp/rustup-init.sh -y --profile minimal --default-toolchain "$RUSTUP_TOOLCHAIN"
+        export PATH="$HOME/.cargo/bin:$PATH"
+        npm ci --ignore-scripts --no-audit --no-fund
+        npm run build:third-party-licenses
 
   - name: publish-workerd
     image: woodpeckerci/plugin-docker-buildx:6.1.2
