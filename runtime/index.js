@@ -12,6 +12,7 @@ import {
   handleFetchDispatch,
 } from "runtime-dispatch";
 import { getLoadedWorkerStub } from "runtime-load";
+import { serveAssetBeforeWorker } from "runtime-assets";
 import {
   bindRuntime,
   runtimeServiceAllowsNamespace,
@@ -63,6 +64,11 @@ export default class Runtime extends WorkerEntrypoint {
       if (!runtimeServiceAllowsNamespace(runtime.serviceName, namespace)) {
         return scope.respond(jsonError(403, "runtime_pool_mismatch", "Worker namespace is not allowed in this runtime pool"));
       }
+
+      const asset = await serveAssetBeforeWorker({
+        env, ctx, request, identity: { ns: namespace, worker: workerName, version },
+      });
+      if (asset) return scope.respond(asset);
 
       // Gateway-routed traffic is the authoritative "this version is active"
       // signal. Service-binding cold-loads use the same helper without eviction.

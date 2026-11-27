@@ -18,6 +18,8 @@ are:
 - `runtime/runtime.js`: workerLoader cache bookkeeping and sibling eviction.
 - `runtime/dispatch.js` and `runtime/dispatch/*`: fetch/scheduled/queue/workflow
   dispatch helpers.
+- `runtime/assets.js`: ASSETS manifest cache, asset matching, and origin reads for
+  pre-Worker serving and `env.ASSETS.fetch()`.
 
 Workers are loaded by immutable id `<ns>:<worker>:<version>`. Promotion selects an
 existing version; a dispatch cold-loads it only when that id is absent from the local
@@ -80,16 +82,18 @@ workerd config wiring has a few non-obvious constraints:
 - Loader socket `:8081`: gateway-routed tenant fetch traffic.
 - Internal socket `:8088`: `GET /_healthz`, `GET /_metrics`, workflow run/notify,
   scheduled dispatch, and queue dispatch only.
-- `redis-proxy` sidecar: cold-load, tenant secret envelope decrypt, KV, queue producer,
-  AI provider resolution/model discovery, and log-tail active checks and appends.
+- `redis-proxy` sidecar: cold-load, ASSETS manifest reads, tenant secret envelope
+  decrypt, KV, queue producer, AI provider resolution/model discovery, and log-tail
+  active checks and appends.
 - Host-side stateful binding transport: generic D1, DO, and workflows backend Fetchers
   remain in the loader realm, while loaded-worker env receives declaration-scoped host
   adapters. The DO host adapter performs owner direct forwarding through runtime's
   internal-network outbound; there is no loaded-worker owner-network Fetcher.
 - Env-backed bindings: queues and KV call `redis-proxy`; R2 signs S3-compatible requests;
   AI resolves encrypted namespace credentials through redis-proxy and uses a
-  public-only network service; ASSETS uses deploy-time metadata to generate tokenized
-  CDN URLs rather than hidden Fetchers.
+  public-only network service; ASSETS reads the version's manifest through redis-proxy
+  and fetches bytes anonymously from the asset origin rather than through hidden
+  Fetchers.
 
 Tenant-visible bindings include KV, R2, D1, Durable Objects, Queues, AI, ASSETS,
 service bindings, platform bindings, and workflows.
@@ -124,9 +128,10 @@ services. Runtime therefore treats bindings as adapters:
   an atomic provider/credential snapshot, revalidates the exact official destination,
   and uses the public-only `AI_NETWORK` service. Provider credentials never enter the
   loaded Worker env. See [`ai.md`](ai.md) for the protocol and lifecycle contract.
-- ASSETS is a deploy-artifact URL helper: control uploads assets to S3-compatible
-  storage during deploy, while runtime reads `__meta__.assets` plus `ASSETS_CDN_BASE`
-  and only exposes `env.ASSETS.url(path)` for tokenized CDN URLs.
+- ASSETS serves immutable deploy artifacts: control uploads them to S3-compatible
+  storage and commits a per-version manifest during deploy. Runtime answers matching
+  requests before the Worker runs, and exposes `env.ASSETS.fetch()` plus
+  `env.ASSETS.url(path)` for tokenized CDN URLs. See [ASSETS](#assets).
 - Service and platform bindings use workerd JSRPC/fetch machinery, but control metadata
   decides which worker, namespace, version, and entrypoint are allowed.
 
@@ -255,15 +260,9 @@ then uses only its closed-over trampoline. Tenant code that directly captures an
 the raw adapter remains outside the facade contract, and those failures are ordinary
 binding errors.
 
-ASSETS is a deploy-artifact helper, not a full Cloudflare Pages asset pipeline. Control
-uploads files to `assets/<ns>/<worker>/<token>/<path>`, injects an `ASSETS` binding, and
-runtime exposes `env.ASSETS.url(path)`. Tenant code awaits the JSRPC result; the
-host-side URL construction is IO-free and returns a CDN-facing URL using
-`ASSETS_CDN_BASE`. Path segments are split on `/`, empty
-segments plus `.` and `..` are rejected, and each segment is percent-encoded. Version is
-bound at load time, so rollback flips asset URLs. If workers need auth or rewrite logic
-for static bytes, they should keep files in the bundle instead of using declared
-`assets`.
+ASSETS serves a version's declared static files before the Worker runs and through
+`env.ASSETS.fetch()`, and builds tokenized CDN URLs with `env.ASSETS.url()`; see
+[ASSETS](#assets).
 
 R2 and ASSETS deliberately have different lifecycle semantics. ASSETS are deploy
 artifacts and version/worker deletion stages `worker-delete-s3-cleanup` work. R2 is
@@ -292,6 +291,83 @@ as `__platform__`. Callers declare `[[platform_bindings]]`; control resolves the
 the target, and forwards only target-declared `required_caller_secrets` from the
 caller. Raw `[[services]] ns = <platform-tier-ns>` is rejected, and gateway rejects
 public traffic for platform-tier namespaces before Redis lookup.
+
+## ASSETS
+
+Control uploads each deploy's files to `assets/<ns>/<worker>/<token>/<path>`, injects an
+`ASSETS` binding, and commits a manifest as the `__assets__` field of the version's
+bundle hash in the same transaction as `__meta__`. The manifest holds the object prefix
+and, per file, the content type, a strong ETag (the first 128 bits of the body's
+SHA-256, hex) and the size. Rollback, promote and secret bumps carry the manifest with
+the version. Deploy limits, all answered with 413:
+
+| Limit | Value | Error |
+|---|---|---|
+| Files per version | 20,000 | `too_many_assets` |
+| One asset path | 512 UTF-8 bytes | `asset_path_too_long` |
+| Serialized manifest | 4 MiB of UTF-8 | `assets_manifest_too_large` |
+
+Every declared asset is public. Pre-Worker serving answers asset paths before the
+Worker's own code, and service-binding `fetch()` into the default entrypoint is answered
+before the target sees `callerNs` or `callerSecrets`. A Worker that keeps files behind
+its own authorization must not declare them as assets.
+
+Runtime matches requests with Cloudflare's defaults, the only ones the CLI delivers:
+`run_worker_first = false`, `html_handling = "auto-trailing-slash"` and
+`not_found_handling = "none"`. Before dispatching a gateway request, runtime reads the
+version's manifest through the Pod-local redis-proxy sidecar (`GET /runtime/assets`).
+Manifests are cached per process by immutable worker id: 512 entries and a byte budget
+of eight maximum-size manifests (each counted as its bytes plus 64), least recently used
+first. A
+version without one is cached as absent. Concurrent cold requests for one version share
+a single read: each waiting request awaits its own Promise, which the loading request
+settles with the parsed manifest, an I/O-free value. If the loading request is cancelled
+and never settles, a waiter takes over after 6 seconds. A `GET` or `HEAD` without
+`Upgrade` whose decoded path matches an asset is answered without loading the Worker:
+
+- `/a` serves `a`, then `a.html`; `/a/` serves `a/index.html`.
+- `/a.html`, `/a/index.html`, `/a/index` and the trailing-slash forms that do not match
+  get a 307 to the canonical spelling, unless that spelling is itself an asset. The
+  `Location` is relative (`./a`, `../a/`) and keeps the query, so it stays under the
+  `/<worker>` mount the gateway stripped.
+- The path matched is the one the Worker sees: subdomain routes strip `/<worker>`,
+  pattern routes keep the full path.
+- Responses carry the manifest content type, `ETag`,
+  `Cache-Control: public, max-age=0, must-revalidate` and `Content-Length`.
+  `If-None-Match` (strong, weak, lists, `*`) returns 304, and `HEAD` is answered from the
+  manifest, both without an origin read. Range requests get the full body.
+
+Everything else, including other methods, WebSocket upgrades and unmatched paths, goes
+to the Worker unchanged. A service-binding `fetch()` into a target's default entrypoint
+takes the same path; named entrypoints and RPC do not. Gateway requests answered by an
+asset emit no tail event because the Worker does not run. A service-binding `fetch()`
+emits its usual target `worker_fetch` event either way, including manifest and origin
+failures.
+
+`env.ASSETS.fetch(request | url)` uses the same matching on the request path and returns
+the asset, its 307, a 304, or an empty 404; methods other than `GET`/`HEAD` get 405. It
+works in fetch handlers and Durable Objects alike. `env.ASSETS.url(path)` returns a
+CDN-facing URL using `ASSETS_CDN_BASE`: path segments are split on `/`, empty segments
+plus `.` and `..` are rejected, and each segment is percent-encoded. Binding props pin
+the loaded version, so rollback flips both.
+
+Bytes come from an anonymous `GET` of `<origin>/<prefix><encoded path>` from host code,
+where `<origin>` is `ASSETS_ORIGIN_BASE` (an in-mesh, path-style bucket URL) or, when
+unset, `ASSETS_CDN_BASE`. The request carries no client headers or credentials, so no
+runtime holds ASSETS bucket keys; the bucket must allow anonymous reads at that origin,
+which tokenized CDN URLs already require. Origin headers are not forwarded. A 30-second
+deadline covers the origin's response headers, and a client that disconnects first
+aborts the origin read. The body then streams under the shared S3 read (30 seconds) and
+idle (5 minutes) deadlines, through a `FixedLengthStream` of the manifest size, so a body
+of a different length errors instead of being served.
+
+Failures fail closed rather than falling through to the Worker: a manifest read error
+or a malformed manifest (including a prefix outside its bundle's namespace and worker) is
+a 502 from runtime, and an origin error for a listed file is a 502 for the pre-Worker
+path or a thrown error from `env.ASSETS.fetch()`. Versions deployed before manifests
+existed have none, so they get no pre-Worker serving and `env.ASSETS.fetch()` returns
+404 until redeployed. If workers need auth or rewrite logic for static bytes, they should
+keep files in the bundle instead of declared `assets`.
 
 ## Redis / Storage Contracts
 
@@ -479,6 +555,14 @@ advancing request clock; it remains one aggregate rather than a per-stage CPU pr
 
 ## Deployment / Rollout Notes
 
+- Runtimes read asset bytes from `ASSETS_ORIGIN_BASE` when set, else `ASSETS_CDN_BASE`.
+  Point `ASSETS_ORIGIN_BASE` at an in-mesh, path-style URL of the assets bucket that
+  allows anonymous reads, and allow user-runtime, system-runtime and do-runtime egress
+  to it. redis-proxy runs as a sidecar in the same Pod or ECS task as each runtime,
+  reached at `127.0.0.1:7070`, and both images come from one release, so a Pod rolls
+  `/runtime/assets` together with the runtime that calls it. A topology that runs
+  redis-proxy separately must roll it strictly before the runtimes; until then every
+  `GET`/`HEAD` to a cold version fails with 502.
 - Runtime/Control contract changes follow the reader-before-writer procedure in the
   [infra rollout notes](infra.md#deployment--rollout-notes); do not rely on an
   uncoordinated simultaneous roll.
@@ -581,6 +665,10 @@ admission release paths, timers, or request-context cleanup.
 - `tests/unit/runtime-r2-client.test.js`
 - `tests/unit/runtime-r2-host.test.js`
 - `tests/unit/runtime-workflows-client.test.js`
+- `tests/unit/runtime-assets.test.js`
+- `tests/unit/assets-manifest.test.js`
+- `tests/integration/assets-serving.test.js`
+- `tests/integration/assets-binding.test.js`
 - `tests/integration/worker-modules.test.js`
 - `tests/integration/service-bindings.test.js`
 - `tests/integration/service-bindings-rpc.test.js`

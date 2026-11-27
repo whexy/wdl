@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Added static asset serving. Assets uploaded with a version are served for its URL paths before the Worker runs, with content type, strong `ETag`, conditional `GET` and `HEAD`, following Cloudflare's defaults (`run_worker_first = false`, `html_handling = "auto-trailing-slash"`, `not_found_handling = "none"`). `env.ASSETS.fetch(request | url)` returns the asset Response. Runtimes read asset bytes anonymously from the new optional `ASSETS_ORIGIN_BASE` (an in-mesh bucket URL), falling back to `ASSETS_CDN_BASE`; no runtime needs ASSETS bucket keys. Redeploy existing Workers to get serving. Deploys are capped at 20,000 asset files, 512-byte asset paths and a 4 MiB manifest (413 `too_many_assets`, `asset_path_too_long`, `assets_manifest_too_large`), and `__meta__` and `__assets__` are reserved module paths. Asset content types now cover `.htm`, `.avif`, `.mp4`, `.webm`, `.pdf`, `.webmanifest` and other common media.
+- **Breaking:** redeploying a Worker with `[assets]` now publishes every declared asset ahead of the Worker, including through service bindings before the target checks caller identity. `run_worker_first = true` is not honored because the CLI accepts it without forwarding it. Move files that a Worker guards with its own authorization out of `assets` before redeploying.
 - Fixed `ctx.exports.default` inside Durable Objects: the do-runtime wrapper now re-exports the Worker's default export, so DO self-loopback through the default handler works as in stock workerd.
 
 ## wdl.20261116.1 - 2026-11-17

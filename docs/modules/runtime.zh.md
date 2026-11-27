@@ -13,6 +13,7 @@ Runtime 从 Redis 加载不可变 worker version，构建 tenant-facing `env` bi
 - `runtime/load.js` 和 `runtime/load/*`：bundle assembly、module rewrite、env construction、wrapper generation。
 - `runtime/runtime.js`：workerLoader cache bookkeeping 和 sibling eviction。
 - `runtime/dispatch.js` 和 `runtime/dispatch/*`：fetch/scheduled/queue/workflow dispatch helper。
+- `runtime/assets.js`：ASSETS manifest cache、asset 匹配和 origin 读取，供 Worker 之前的 serving 与 `env.ASSETS.fetch()` 共用。
 
 Worker 通过不可变 id `<ns>:<worker>:<version>` 加载。Promote 选择已有版本；只有该 id 不在本地 loader cache 中时，dispatch 才会 cold-load。重复 promote 或回滚到已缓存版本不保证创建 fresh isolate。
 `runtime/load.js` 也统一持有 `workerLoader.get()` wrapper：每次 cache miss 都会登记供后续 eviction 使用，只有 active-version dispatch path 会请求 sibling eviction；service binding 加载 pinned version 时不会驱逐 sibling。
@@ -36,9 +37,9 @@ workerd config wiring 有几条不明显的约束：`workerd serve` 的 config �
 
 - Loader socket `:8081`：gateway-routed tenant fetch 流量。
 - Internal socket `:8088`：只处理 `GET /_healthz`、`GET /_metrics`、workflow run/notify、scheduled dispatch 和 queue dispatch。
-- `redis-proxy` sidecar：cold-load、tenant secret envelope decrypt、KV、queue producer、AI provider resolve/model discovery、log-tail active check 和 append。
+- `redis-proxy` sidecar：cold-load、ASSETS manifest 读取、tenant secret envelope decrypt、KV、queue producer、AI provider resolve/model discovery、log-tail active check 和 append。
 - Host-side stateful binding transport：通用 D1、DO 和 workflows backend Fetcher 留在 loader realm，loaded-worker env 只接收声明级 scoped host adapter。DO host adapter 通过 runtime 的 internal-network outbound 完成 owner direct forwarding，不存在 loaded-worker owner-network Fetcher。
-- Env-backed binding：queues 和 KV 调 `redis-proxy`；R2 签名 S3-compatible request；AI 通过 redis-proxy 解析加密的 namespace credential，并使用 public-only network service；ASSETS 使用 deploy-time metadata 生成 tokenized CDN URL，不是隐藏 Fetcher。
+- Env-backed binding：queues 和 KV 调 `redis-proxy`；R2 签名 S3-compatible request；AI 通过 redis-proxy 解析加密的 namespace credential，并使用 public-only network service；ASSETS 通过 redis-proxy 读取 version 的 manifest，并从 asset origin 匿名读取 bytes，不是隐藏 Fetcher。
 
 Tenant 可见 binding 包括 KV、R2、D1、Durable Objects、Queues、AI、ASSETS、service bindings、platform bindings 和 workflows。
 
@@ -51,7 +52,7 @@ workerd 提供 isolate、module evaluation、named entrypoint 和 JSRPC 机制�
 - D1、Durable Objects、Workflows 这类 stateful binding 通过 binding-scoped host adapter 调专门 backend service。不可变 props 把每个 adapter 限定到声明的 database、object namespace 或 workflow；loaded worker 不会拿到通用的 authenticated DO 或 Workflows Fetcher。
 - R2 是 S3-compatible object-storage adapter：runtime 使用平台 credential 签名请求，并发送到配置的 endpoint。
 - AI 是 host binding 加 generated tenant-realm facade。Runtime 从 redis-proxy 读取原子的 provider/credential snapshot，重新校验精确官方 destination，再通过 public-only `AI_NETWORK` service 出站。Provider credential 不进入 loaded Worker env。Protocol 与 lifecycle 合同见 [`ai.zh.md`](ai.zh.md)。
-- ASSETS 是 deploy artifact URL helper：control 在 deploy 时把 assets 上传到 S3-compatible storage；runtime 读取 `__meta__.assets` 和 `ASSETS_CDN_BASE`，只暴露 `env.ASSETS.url(path)` 用来生成 tokenized CDN URL。
+- ASSETS 提供 immutable deploy artifact：control 在 deploy 时把 assets 上传到 S3-compatible storage 并提交每个 version 的 manifest。Runtime 在 Worker 运行前响应匹配的请求，并暴露 `env.ASSETS.fetch()` 和生成 tokenized CDN URL 的 `env.ASSETS.url(path)`。见 [ASSETS](#assets)。
 - Service 和 platform binding 使用 workerd JSRPC/fetch 机制，但 control metadata 决定允许访问哪个 worker、namespace、version 和 entrypoint。
 
 以 `_wdl-` 开头的 root module name 由 WDL generated module 保留。Control 会拒绝使用该前缀的新 bundle，runtime/do-runtime 在 cold-load 包含该名称的 persisted version 时 fail closed。既有 version 必须重命名 module 并重新部署；WDL 不提供 compatibility alias。Generated module export 是实现细节，不属于 tenant import surface。该保留规则只作用于 root，`src/_wdl-helper.js` 这类路径仍是合法 tenant module name。
@@ -74,7 +75,7 @@ Object default export 保留其余可枚举 own property，不会求值无关 ge
 
 Generated host-facade wrapper 保留 Worker 的 importable-env compatibility contract：启用 importable env 时，tenant module 可以在 module scope 保存 imported env proxy，并在 invocation 中从 proxy 实时读取 binding；module evaluation 期间直接缓存单个 binding 不属于 facade contract，因为 module evaluation 早于 wrapper invocation，只可能观察到 binding-scoped raw host adapter。设置 `disallow_importable_env` 后，module scope 和 invocation 中的 imported env 都保持为空，positional env 仍然获得 generated facade。同时声明 Workflow class 与 KV binding 的 bundle 会静态包装 invocation 提供的 KV binding，因此普通 handler 缓存的 facade 在 Workflow 中复用时仍保持包装。Generated support module 会在 tenant module evaluation 前捕获原生 `ServiceStub` prototype chain、`fetch`、`RpcPromise.then` 和 `Promise.prototype.then`；启用 importable env 时也会在此时绑定一个 WDL-owned KV RPC trampoline，设置 `disallow_importable_env` 时则在每次 facade materialization 时排除已保存原生 prototype chain 上的遮蔽属性，并在进入 tenant handler 或 constructor 前从当次 invocation-provided KV adapter 绑定同一 trampoline。每个 facade 后续只调用自己的闭包 trampoline。Tenant 直接捕获并调用 raw adapter 仍在 facade contract 外；其 failure 是普通 binding error。
 
-ASSETS 是 deploy-artifact helper，不是完整 Cloudflare Pages asset pipeline。Control 把文件上传到 `assets/<ns>/<worker>/<token>/<path>`，注入 `ASSETS` binding，runtime 暴露 `env.ASSETS.url(path)`。Tenant code 会 await 这次 JSRPC 调用；host 侧 URL 构造不做 IO，并用 `ASSETS_CDN_BASE` 返回浏览器可访问的 CDN URL。Path 按 `/` 切段，空段、`.` 和 `..` 被拒绝，每段会 percent-encode。Version 在 load 时绑定，因此 rollback 会切换 asset URL。需要对静态文件做 auth 或 rewrite 的 worker 应把文件留在 bundle 里，而不是使用 declared `assets`。
+ASSETS 在 Worker 运行前和通过 `env.ASSETS.fetch()` 提供 version 声明的静态文件，并用 `env.ASSETS.url()` 生成 tokenized CDN URL；见 [ASSETS](#assets)。
 
 R2 和 ASSETS 生命周期语义故意不同。ASSETS 是 deploy artifact，version/worker delete 会 stage `worker-delete-s3-cleanup` work。R2 是 tenant runtime data，worker delete 永远不删除 R2 object。
 
@@ -83,6 +84,33 @@ Service binding 在 caller deploy 时冻结。Control 解析 target namespace、
 Cross-namespace service binding 要求 target 为被绑定的 entrypoint 声明 `[[exports]]` entry；default export 也要声明 `entrypoint = "default"`。该 entry 的 `allowed_callers` 控制 cross-namespace 访问；`["*"]` 对所有 namespace 开放，空数组则关闭 cross-namespace caller。没有 `[[exports]]` 的 target 只向 same-namespace caller 暴露 default entrypoint。Same-namespace caller 绕过 ACL，但 target 一旦声明 `[[exports]]`，仍受 strict entrypoint visibility 约束。ACL 变化是 deploy-time，不是 call-time；既有 caller 会保持 pin，直到 redeploy。
 
 Platform binding 是 WDL-specific、指向 platform-tier namespace（例如 `__platform__`）的 service binding。Caller 声明 `[[platform_bindings]]`；control 根据 active `[[exports]] as = "..."` entries 解析 `SCREAMING_SNAKE_CASE` symbol，冻结 target，并只从 caller 转发 target 声明的 `required_caller_secrets`。Raw `[[services]] ns = <platform-tier-ns>` 会被拒绝，gateway 也会在 Redis lookup 前拒绝 platform-tier namespace 的 public traffic。
+
+## ASSETS
+
+Control 把每次 deploy 的文件上传到 `assets/<ns>/<worker>/<token>/<path>`，注入 `ASSETS` binding，并在与 `__meta__` 相同的 transaction 中把 manifest 写入该 version bundle hash 的 `__assets__` 字段。Manifest 记录 object prefix，以及每个文件的 content type、strong ETag（body SHA-256 的前 128 bit，hex）和 size。Rollback、promote 和 secret bump 会随 version 携带 manifest。Deploy 限制，均返回 413：
+
+| 限制 | 值 | 错误 |
+|---|---|---|
+| 每个 version 的文件数 | 20,000 | `too_many_assets` |
+| 单个 asset path | 512 UTF-8 bytes | `asset_path_too_long` |
+| 序列化后的 manifest | 4 MiB UTF-8 | `assets_manifest_too_large` |
+
+每个声明的 asset 都是公开的。Worker 之前的 serving 会先于 Worker 自身代码响应 asset path，对 default entrypoint 的 service-binding `fetch()` 也会在 target 看到 `callerNs` 或 `callerSecrets` 之前被响应。用自身授权保护的文件不能声明为 assets。
+
+Runtime 按 Cloudflare 默认值匹配请求，这也是 CLI 唯一能传递的配置：`run_worker_first = false`、`html_handling = "auto-trailing-slash"`、`not_found_handling = "none"`。转发 gateway 请求前，runtime 通过 Pod 内的 redis-proxy sidecar（`GET /runtime/assets`）读取 version 的 manifest。Manifest 按 immutable worker id 在进程内缓存：最多 512 条，字节预算恰好容纳八个最大尺寸的 manifest（每条按其 bytes 加 64 计），按最近最少使用淘汰。没有 manifest 的 version 会缓存为 absent。同一 version 的并发 cold request 共享一次读取：每个等待的请求 await 自己的 Promise，由发起读取的请求用解析后的 manifest（不含 I/O 的值）settle。若发起读取的请求被取消且始终不 settle，等待者在 6 秒后接手。不带 `Upgrade` 的 `GET` 或 `HEAD`，若 decode 后的 path 匹配 asset，则不加载 Worker 直接响应：
+
+- `/a` 依次提供 `a`、`a.html`；`/a/` 提供 `a/index.html`。
+- `/a.html`、`/a/index.html`、`/a/index` 以及不匹配的 trailing-slash 形式会 307 到 canonical 写法，除非该写法本身就是 asset。`Location` 是相对引用（`./a`、`../a/`）并保留 query，因此仍在 gateway 去掉的 `/<worker>` mount 之下。
+- 匹配的 path 就是 Worker 看到的 path：subdomain route 去掉 `/<worker>`，pattern route 保留完整 path。
+- 响应带 manifest 的 content type、`ETag`、`Cache-Control: public, max-age=0, must-revalidate` 和 `Content-Length`。`If-None-Match`（strong、weak、列表、`*`）返回 304，`HEAD` 直接用 manifest 响应，两者都不读 origin。Range 请求返回完整 body。
+
+其他请求，包括其他 method、WebSocket upgrade 和未匹配 path，原样交给 Worker。对 target default entrypoint 的 service-binding `fetch()` 走同一路径；named entrypoint 和 RPC 不走。由 asset 响应的 gateway 请求不产生 tail event，因为 Worker 没有运行。Service-binding `fetch()` 无论哪种情况都产生常规的 target `worker_fetch` event，包括 manifest 和 origin 失败。
+
+`env.ASSETS.fetch(request | url)` 对 request path 使用同样的匹配，返回 asset、307、304 或空 404；`GET`/`HEAD` 以外的 method 返回 405。fetch handler 和 Durable Object 中都可用。`env.ASSETS.url(path)` 用 `ASSETS_CDN_BASE` 返回面向 CDN 的 URL：path 按 `/` 切段，空段、`.` 和 `..` 被拒绝，每段 percent-encode。Binding props 固定加载的 version，因此 rollback 会同时切换两者。
+
+Bytes 由 host code 对 `<origin>/<prefix><encoded path>` 发起匿名 `GET` 获取，`<origin>` 是 `ASSETS_ORIGIN_BASE`（mesh 内 path-style bucket URL），未设置时为 `ASSETS_CDN_BASE`。请求不带 client header 或 credential，因此任何 runtime 都不持有 ASSETS bucket key；bucket 必须允许在该 origin 匿名读取，tokenized CDN URL 本来就要求这一点。Origin header 不转发。Origin 响应 header 受 30 秒期限约束，client 先断开时会中止 origin 读取。之后 body 在共享的 S3 read（30 秒）和 idle（5 分钟）期限下，经由 manifest size 的 `FixedLengthStream` 透传，长度不符的 body 会报错而不会被提供。
+
+失败时 fail closed，不回落到 Worker：manifest 读取错误或 malformed manifest（包括 prefix 不属于其 bundle 的 namespace 和 worker）由 runtime 返回 502；manifest 中列出的文件 origin 出错时，Worker 之前的路径返回 502，`env.ASSETS.fetch()` 抛出错误。Manifest 出现之前 deploy 的 version 没有 manifest，因此在重新 deploy 前没有 Worker 之前的 serving，`env.ASSETS.fetch()` 返回 404。需要对静态文件做 auth 或 rewrite 的 worker 应把文件留在 bundle 里，而不是使用 declared `assets`。
 
 ## Redis / Storage 合同
 
@@ -139,6 +167,7 @@ Cold-load duration metric 使用 workerd request clock。`bundle_load_stage_dura
 
 ## 部署 / Rollout 注意事项
 
+- Runtime 在设置了 `ASSETS_ORIGIN_BASE` 时从它读取 asset bytes，否则从 `ASSETS_CDN_BASE` 读取。把 `ASSETS_ORIGIN_BASE` 指向 assets bucket 允许匿名读取的 mesh 内 path-style URL，并允许 user-runtime、system-runtime 和 do-runtime egress 到它。redis-proxy 作为 sidecar 与每个 runtime 运行在同一 Pod 或 ECS task 中，通过 `127.0.0.1:7070` 访问，且两个 image 来自同一 release，因此 Pod 会把 `/runtime/assets` 与调用它的 runtime 一起 roll。单独运行 redis-proxy 的拓扑必须严格先于 runtime roll；在此之前，对 cold version 的每个 `GET`/`HEAD` 都会 502。
 - Runtime/Control 合同变化遵循 [infra rollout 注意事项](infra.zh.md#部署--rollout-注意事项)中的 reader-before-writer 流程，不能依赖未协调的同时 rolling。
 - Runtime 不为 loaded worker 开启 workerd 的宽泛 `experimental` flag。Historical-version eviction 会注入 `__WdlAbort__`；当前 bundled workerd baseline 的 `abortIsolate()` 不需要该 flag，并且当前 upstream 实现只移除 loader cache identity，同时允许 outstanding call 自然 drain；升级 workerd 时必须重新核对该行为。
 - Bundled workerd 在 active request 外（包括 dynamic module evaluation）调用 `Date.now()`、无参数 `new Date()` 或 `performance.now()` 时都返回 `0`。Generated wrapper 原样传递 request-owned `ExecutionContext`，因此无需 WDL shim 即可使用 `ctx.abort(reason?)`、`ctx.tracing.startSpan()`、`ctx.tracing.getActiveSpan()`、`Span.recordException()`、span attribute setter、`Span.updateName()`、`Span.setStatus()` 和 `Span.spanContext()`。Tracing method 不需要额外 tracing flag，但方法可用不代表 span 会被导出；`Span.spanContext()` 返回当前 invocation 生成、不会被导出的 id。`ctx.abort()` 只终止当前 stateless invocation，与 host-only `abortIsolate()` eviction 无关。
@@ -163,6 +192,9 @@ RPC readable cancellation 也会传播到 idle origin；receiver 丢弃未正常
 - `tests/unit/runtime-dispatch-handlers.test.js`
 - `tests/unit/runtime-dispatch-workflows.test.js`
 - `tests/unit/runtime-service-binding.test.js`
+- `tests/unit/runtime-assets.test.js`
+- `tests/unit/assets-manifest.test.js`
+- `tests/integration/assets-serving.test.js`
 - `tests/unit/runtime-queue-producer.test.js`
 - `tests/unit/runtime-d1-client.test.js`
 - `tests/unit/runtime-do-client.test.js`

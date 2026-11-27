@@ -76,7 +76,7 @@ worker:session-policy:<ns>:<name>
 worker:session-policy-seq:<ns>:<name>
                                 String, permanent monotonic restart-event allocator
 worker-versions:<ns>:<name>     ZSET, score=int version, member="v<int>"
-worker:<ns>:<name>:v:<int>      Hash, bundle bytes plus __meta__
+worker:<ns>:<name>:v:<int>      Hash, bundle bytes plus __meta__ and optional __assets__
 worker-delete-lock:<ns>:<name>  String EX 30, per-worker delete critical-section lock;
                                value is whole:<token> or version:<token>; DO owner
                                resolution/claim and actor dispatch/storage-delete assertions
@@ -231,6 +231,14 @@ lifecycle cleanup, workflow view, or environment budget fail closed while their
 authoritative route or index still names the bundle. Deploy discovery/link preflight
 does not classify absence as `corrupt_meta`; the watched commit remains authoritative
 and rejects a missing pinned service target as `target_drift`.
+
+A version deployed with assets also carries an `__assets__` field: the JSON ASSETS
+manifest `{"prefix":"assets/<ns>/<worker>/<token>/","files":{"<path>":{"contentType",
+"etag","size"}}}` that Control writes in the same transaction as `__meta__`
+(`shared/assets-manifest.js`). redis-proxy serves it to runtime through
+`GET /runtime/assets` and omits it from `/runtime/load`. Runtime fails closed on any other
+shape, including a prefix outside the hash's own namespace and worker. `__meta__` and
+`__assets__` are reserved module paths.
 
 Routes, platform-domain exposure, crons, queue consumers, session policy mode,
 bindings, vars, exports, workflow definitions, and asset prefixes are version metadata.

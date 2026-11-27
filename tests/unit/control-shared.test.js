@@ -65,6 +65,7 @@ const {
   releaseDeleteLock,
   runOptimistic,
   secretEnvelopeErrorResponse,
+  stageBundleCommit,
   state,
 } = await import(controlSharedUrl);
 
@@ -1525,4 +1526,30 @@ test("releaseDeleteLock uses token-scoped DELIFEQ", async (t) => {
 
   assert.deepEqual(calls, [["worker-delete-lock:demo:api", "whole:token-a"]]);
   assert.deepEqual(logs, []);
+});
+
+test("stageBundleCommit writes the assets manifest beside __meta__ in one replace", () => {
+  /** @type {Array<unknown[]>} */
+  const ops = [];
+  const multi = {
+    del: (/** @type {string} */ key) => { ops.push(["del", key]); },
+    hSet: (/** @type {string} */ key, /** @type {string} */ field, /** @type {unknown} */ value) => {
+      ops.push(["hSet", key, field, value]);
+    },
+  };
+  stageBundleCommit(multi, "worker:demo:site:v:3", {
+    meta: { mainModule: "w.js" },
+    normalized: [["w.js", "x"]],
+    assetsManifest: "{\"files\":{}}",
+  });
+  assert.deepEqual(ops, [
+    ["del", "worker:demo:site:v:3"],
+    ["hSet", "worker:demo:site:v:3", "w.js", "x"],
+    ["hSet", "worker:demo:site:v:3", "__assets__", "{\"files\":{}}"],
+    ["hSet", "worker:demo:site:v:3", "__meta__", "{\"mainModule\":\"w.js\"}"],
+  ]);
+
+  ops.length = 0;
+  stageBundleCommit(multi, "worker:demo:site:v:4", { meta: {}, normalized: [] });
+  assert.deepEqual(ops.map((op) => op[2]), [undefined, "__meta__"]);
 });

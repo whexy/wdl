@@ -428,6 +428,15 @@ test("prepareBundle: vars reject non-object containers", () => {
   );
 });
 
+test("prepareBundle: bundle metadata fields are reserved module paths", () => {
+  for (const reserved of ["__meta__", "__assets__"]) {
+    assert.throws(
+      () => prepareBundle("worker.js", { "worker.js": "x", [reserved]: "x" }),
+      /reserved for bundle metadata/
+    );
+  }
+});
+
 test("prepareBundle: missing mainModule throws without side effects", () => {
   assert.throws(
     () => prepareBundle("missing.js", { "worker.js": "x" }),
@@ -1375,6 +1384,22 @@ test("normalizeAssets: rejects absolute and traversal paths", () => {
   assert.throws(() => normalizeAssets({ "./b": "" }), /invalid path/);
   assert.throws(() => normalizeAssets({ "a//b": "" }), /invalid path/);
   assert.throws(() => normalizeAssets({ "": "" }), /invalid path/);
+});
+
+test("normalizeAssets: caps a version at 20000 files", () => {
+  const files = Object.fromEntries(Array.from({ length: 20_001 }, (_, i) => [`f${i}`, ""]));
+  assert.throws(() => normalizeAssets(files), (/** @type {any} */ err) =>
+    err.status === 413 && err.code === "too_many_assets" && /20001 files exceed the 20000-file limit/.test(err.message));
+  delete files.f0;
+  assert.equal(normalizeAssets(files).length, 20_000);
+});
+
+test("normalizeAssets: caps asset paths at 512 UTF-8 bytes", () => {
+  assert.equal(normalizeAssets({ [`d/${"a".repeat(510)}`]: "" }).length, 1);
+  assert.throws(() => normalizeAssets({ [`d/${"a".repeat(511)}`]: "" }), (/** @type {any} */ err) =>
+    err.status === 413 && err.code === "asset_path_too_long");
+  // 171 three-byte characters are 513 bytes but only 171 UTF-16 units.
+  assert.throws(() => normalizeAssets({ ["€".repeat(171)]: "" }), (/** @type {any} */ err) => err.code === "asset_path_too_long");
 });
 
 test("normalizeAssets: rejects invalid base64", () => {

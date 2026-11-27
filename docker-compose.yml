@@ -83,6 +83,8 @@ x-do-runtime-env: &do-runtime-env
   <<: [*internal-auth-env, *ai-runtime-env]
   REDIS_ADDR: redis:6379
   REDIS_PROXY_URL: http://redis-proxy-do:7070
+  ASSETS_CDN_BASE: ${ASSETS_CDN_BASE:-http://localhost:${WDL_S3MOCK_HOST_PORT:-19500}/wdl-assets}
+  ASSETS_ORIGIN_BASE: http://s3mock:9090/wdl-assets
   DO_OWNER_TTL_SECONDS: ${DO_OWNER_TTL_SECONDS:-120}
   DO_PREVENT_EVICTION: ${DO_PREVENT_EVICTION-true}
   DO_OWNER_LEASE_GUARD_MS: ${DO_OWNER_LEASE_GUARD_MS:-1000}
@@ -248,8 +250,10 @@ services:
       REDIS_PROXY_URL: ${USER_RUNTIME_REDIS_PROXY_URL:-http://redis-proxy-user:7070}
       D1_QUERY_TIMEOUT_MS: "3000"
       # Must resolve from the browser (not from inside the container) —
-      # runtime only returns this URL to workers; it never fetches it.
+      # env.ASSETS.url() hands it to clients.
       ASSETS_CDN_BASE: ${ASSETS_CDN_BASE:-http://localhost:${WDL_S3MOCK_HOST_PORT:-19500}/wdl-assets}
+      # In-mesh read origin for serving asset bytes; anonymous GET, no keys.
+      ASSETS_ORIGIN_BASE: http://s3mock:9090/wdl-assets
       R2_S3_ENDPOINT: http://s3mock:9090
       R2_S3_BUCKET: wdl-r2
       R2_S3_ACCESS_KEY_ID: test
@@ -295,6 +299,7 @@ services:
       REDIS_PROXY_URL: http://redis-proxy-system:7070
       D1_QUERY_TIMEOUT_MS: "3000"
       ASSETS_CDN_BASE: ${ASSETS_CDN_BASE:-http://localhost:${WDL_S3MOCK_HOST_PORT:-19500}/wdl-assets}
+      ASSETS_ORIGIN_BASE: http://s3mock:9090/wdl-assets
       PLATFORM_DOMAIN: workers.local
       # Fixed dev value; CLI + tests share it. Prod is terraform-generated.
       # Server-side env is BOOTSTRAP_TOKEN (auth's infra-managed ops

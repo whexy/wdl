@@ -106,6 +106,7 @@ export function compileControlSharedGraph({
       "shared-auth-token": sharedAuthTokenUrl,
       "shared-auth-roles": sharedAuthRolesUrl,
       "shared-queue-keys": sharedQueueKeysUrl,
+      "shared-assets-manifest": repositoryFileUrl("shared/assets-manifest.js"),
       "shared-respond": dependencies.sharedRespondUrl,
       "shared-internal-auth": dependencies.sharedInternalAuthUrl,
       "shared-errors": dependencies.sharedErrorsUrl,

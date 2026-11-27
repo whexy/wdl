@@ -256,7 +256,13 @@ test("buildWorkerEnv: merges vars + secrets with worker secrets taking precedenc
   assert.deepEqual(env.KV1, { kind: "kv", props: { ns: "demo", id: "sessions" } });
   assert.deepEqual(env.ASSETS, {
     kind: "assets",
-    props: { cdnBase: "https://assets.example", prefix: "assets/demo/app/abc/" },
+    props: {
+      cdnBase: "https://assets.example",
+      prefix: "assets/demo/app/abc/",
+      ns: "demo",
+      worker: "app",
+      version: "v5",
+    },
   });
   assert.deepEqual(env.Q, {
     kind: "queue",

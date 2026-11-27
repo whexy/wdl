@@ -222,6 +222,7 @@ fn route_name(method: &axum::http::Method, path: &str) -> &'static str {
         ("GET", "/_healthz") => "healthz",
         ("GET", "/_metrics") => "metrics",
         ("GET", "/runtime/load") => "runtime_load",
+        ("GET", "/runtime/assets") => "runtime_assets",
         ("POST", "/ai/resolve") => "ai_resolve",
         ("POST", "/ai/models") => "ai_models",
         ("GET", "/kv/get") => "kv_get",
@@ -323,7 +324,7 @@ use kv::{kv_delete, kv_get, kv_get_batch, kv_get_with_metadata, kv_list, kv_put}
 use logs::{logs_tail_active, logs_tail_append};
 use observability::{Metrics, log_info, started_log};
 use queue::queue_send;
-use runtime::runtime_load;
+use runtime::{runtime_assets, runtime_load};
 
 pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let port = env_u16("REDIS_PROXY_PORT", 7070);
@@ -353,6 +354,7 @@ pub async fn run() -> Result<(), Box<dyn std::error::Error>> {
         .route("/_healthz", get(healthz))
         .route("/_metrics", get(metrics_handler))
         .route("/runtime/load", get(runtime_load))
+        .route("/runtime/assets", get(runtime_assets))
         .route("/ai/resolve", post(ai::resolve))
         .route("/ai/models", post(ai::models))
         .route("/kv/get", get(kv_get))

@@ -52,7 +52,7 @@ function materializeKvBinding({ name, spec, ns, ctx }) {
 }
 
 /** @param {RuntimeBindingMaterializerArgs} args */
-function materializeAssetsBinding({ name, meta, ns, worker, cdnBase, ctx }) {
+function materializeAssetsBinding({ name, meta, ns, worker, version, cdnBase, ctx }) {
   if (!cdnBase) {
     throw new Error(
       `Binding "${name}" requires ASSETS_CDN_BASE but it is not configured on runtime`
@@ -64,7 +64,7 @@ function materializeAssetsBinding({ name, meta, ns, worker, cdnBase, ctx }) {
       `Binding "${name}" requires __meta__.assets.prefix (bundle shape mismatch — redeploy ${ns}/${worker})`
     );
   }
-  return ctx.exports.Assets({ props: { cdnBase, prefix } });
+  return ctx.exports.Assets({ props: { cdnBase, prefix, ns, worker, version } });
 }
 
 /** @param {RuntimeBindingMaterializerArgs} args */

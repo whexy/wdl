@@ -222,7 +222,7 @@ Key families:
 | `namespaces` | Set | Control | Active namespace gate for gateway/control listings and a best-effort delegated-token collision signal. | Updated when worker lifecycle state changes; whole-worker delete removes the namespace when no active worker remains. Namespace-scoped resources can still outlive this membership. |
 | `workers:<ns>` | Set | Control | Worker lifecycle index. | Whole-worker delete removes the member after blockers pass. |
 | `worker-versions:<ns>:<worker>` | ZSET | Control | Retained version index. | Version delete removes members after referrer checks. |
-| `worker:<ns>:<worker>:v:<n>` | Hash | Control | Immutable bundle/version metadata and modules. | Retained until version/worker delete. |
+| `worker:<ns>:<worker>:v:<n>` | Hash | Control | Immutable bundle/version metadata, modules, and the optional `__assets__` manifest. | Retained until version/worker delete. |
 | `worker:<ns>:<worker>:next_version` | String counter | Control | Monotonic next version number for a logical worker name. | Survives whole-worker delete so worker ids never recycle. |
 | `cron:seq:<ns>:<worker>` | String counter | Control | Permanent Cron generation high-water mark. | Survives empty Cron projections and whole-worker delete so stale slot refs never match recreated entries. |
 | `worker:session-policy:<ns>:<worker>` | String | Control | Active session policy `{version,mode,restartSequence}` projection committed with the route flip. | Whole-worker delete removes it; missing state defaults to `preserve`. |

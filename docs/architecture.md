@@ -137,8 +137,10 @@ Stateful binding calls:
   dispatches runs back to runtime through `:8088`.
 - Queue producers write through redis-proxy to DB 1 after runtime-side caps.
 - R2 uses platform S3-compatible credentials at runtime for mutable tenant object data.
-- ASSETS are immutable deploy artifacts uploaded by control; runtime only constructs
-  tokenized CDN URLs from bundle metadata and `ASSETS_CDN_BASE`.
+- ASSETS are immutable deploy artifacts uploaded by control with a per-version
+  manifest; runtime serves them before the Worker and through `env.ASSETS.fetch()` by
+  reading the public-read asset origin, and constructs tokenized CDN URLs from
+  `ASSETS_CDN_BASE`.
 - KV uses redis-proxy DB 1 key families. Service and platform bindings are in-isolate
   JSRPC surfaces whose ACL and target metadata are resolved by control/runtime.
 - AI facades ask the colocated redis-proxy for an atomic DB 0 provider/credential

@@ -35,6 +35,7 @@
 | `runtime/ai-client.js` | Tenant realm 的 AI facade source，负责 `run()`、`models()`、OpenAI-compatible fetch、streaming 和 WebSocket helper。 |
 | `runtime/bindings/workflow.js`、`runtime/workflows-client.js`、`runtime/dispatch/workflow-*.js`、`runtime/load/wrapper-generate.js` | Workflow binding-scoped identity enforcement 与 transport、facade materialization、dispatch facade、replay cache 和 step semantics。 |
 | `runtime/tail-worker.js` / `runtime/tail-forwarder.js` | Workerd tail capture 和 `wdl tail` 的 activation-gated append path。 |
+| `runtime/assets.js` | ASSETS manifest cache、Cloudflare 默认 asset 匹配和匿名 origin 读取，供 Worker 之前的 serving 与 `env.ASSETS.fetch()` 共用。 |
 | `runtime/lib.js` | 纯 runtime helpers，例如 bundle-to-worker-code、byte normalization 和 dispatch body normalization。 |
 | `control/index.js` | system-runtime `:8082` 上的薄 HTTP dispatcher；auth 后交给 handlers。 |
 | `control/handlers/` | deploy、promote、versions、workers、delete、secrets、hosts、reload、auth tokens、D1、R2、AI provider/credential、workflows 和 log tail endpoint handlers。 |
@@ -89,6 +90,7 @@
 | `shared/s3-retry.js` | runtime R2 与 s3-cleanup worker 共用的 idempotent S3 POST 可取消、有界瞬态重试策略。 |
 | `shared/s3-request.js` | Runtime R2、Control R2/ASSETS 与 cleanup 共用的 S3 总期限和 streaming GET body 生命周期。 |
 | `shared/s3-xml.js` | Control R2、runtime R2 和 system cleanup 路径共用的 S3 XML parsing helpers。 |
+| `shared/assets-manifest.js` | Control 写入、runtime 读取的每个 version ASSETS manifest grammar，以及 `auto-trailing-slash` path 解析和 `If-None-Match` 匹配。 |
 | `shared/assets-token.js` | Control 与 cleanup validation 共用的 canonical ASSETS deploy token 和 object-prefix generation。 |
 | `shared/s3-cleanup-lifecycle.js` | Control 与 cleanup system worker 共用的 worker-delete S3 cleanup task id、queue fields、canonical ASSETS prefix、state 和 outcome。 |
 | `shared/task-identity.js` | D1/DO ownership tiers 共用的缓存式 env/ECS task identity 与 private endpoint resolution。 |

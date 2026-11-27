@@ -63,6 +63,7 @@ export function getLoadedWorkerStub({ env, ns, worker, version }) {
 `);
 const emptyBindingUrl = moduleDataUrl(RUNTIME_BINDING_STUB_SOURCE);
 const emptyInternalUrl = moduleDataUrl(`export default class RuntimeInternal {}`);
+const noAssetsUrl = moduleDataUrl(`export async function serveAssetBeforeWorker() { return null; }`);
 const emptyMetricsPreparationUrl = moduleDataUrl(`
 export function prepareAiCapacityMetrics() {}
 export function prepareKvReadCapacityMetrics() {}
@@ -79,6 +80,7 @@ const IMPORT_STUBS = {
   "runtime-bindings-ai-capacity": emptyMetricsPreparationUrl,
   "runtime-bindings-kv-capacity": emptyMetricsPreparationUrl,
   "runtime-load": runtimeLoadUrl,
+  "runtime-assets": noAssetsUrl,
   "runtime-state": runtimeStateUrl,
   "runtime-internal": emptyInternalUrl,
   "runtime-bindings-kv": emptyBindingUrl,

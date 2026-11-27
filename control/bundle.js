@@ -22,6 +22,12 @@ import { normalizeBindings, validateBindings } from "control-bindings";
 import { parseWorkerdDependencyVersion } from "control-lib";
 import { WORKFLOW_DEFINITIONS_MAX_COUNT, workflowDeclarationsFit } from "control-workflow-definitions";
 import { assertCanonicalBase64 } from "base64.js";
+import {
+  ASSETS_MANIFEST_FIELD,
+  MAX_ASSET_FILES,
+  MAX_ASSET_PATH_BYTES,
+  utf8ByteLength,
+} from "shared-assets-manifest";
 import PACKAGE_JSON_SOURCE from "wdl-package-json-source";
 
 class BundleConfigError extends Error {
@@ -342,6 +348,9 @@ export function prepareBundle(mainModule, rawModules, extras = {}) {
   if (extras.assets) meta.assets = extras.assets;
   const normalized = Object.entries(rawModules).map(([p, value]) => {
     validateModulePath(p);
+    if (p === "__meta__" || p === ASSETS_MANIFEST_FIELD) {
+      throw new Error(`module path ${JSON.stringify(p)} is reserved for bundle metadata`);
+    }
     const { type, bytes } = normalizeModule(value);
     meta.modules[p] = { type };
     return [p, bytes];
@@ -357,13 +366,28 @@ export function normalizeAssets(rawAssets) {
   if (typeof rawAssets !== "object" || Array.isArray(rawAssets)) {
     throw new Error("assets must be an object mapping path → base64 string");
   }
+  const entries = Object.entries(rawAssets);
+  if (entries.length > MAX_ASSET_FILES) {
+    throw new BundleConfigError(
+      413,
+      "too_many_assets",
+      `assets: ${entries.length} files exceed the ${MAX_ASSET_FILES}-file limit`
+    );
+  }
   const out = [];
-  for (const [p, value] of Object.entries(rawAssets)) {
+  for (const [p, value] of entries) {
     if (typeof value !== "string") {
       throw new Error(`assets[${JSON.stringify(p)}] must be a base64 string`);
     }
     if (!p || p.startsWith("/") || p.split("/").some((seg) => seg === "" || seg === "." || seg === "..")) {
       throw new Error(`assets: invalid path ${JSON.stringify(p)}`);
+    }
+    if (utf8ByteLength(p) > MAX_ASSET_PATH_BYTES) {
+      throw new BundleConfigError(
+        413,
+        "asset_path_too_long",
+        `assets: path ${JSON.stringify(p.slice(0, 64))}… exceeds ${MAX_ASSET_PATH_BYTES} UTF-8 bytes`
+      );
     }
     const bytes = decodeBase64Strict(value, `assets[${JSON.stringify(p)}]`);
     out.push([p, bytes]);

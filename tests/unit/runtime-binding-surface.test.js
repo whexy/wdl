@@ -75,14 +75,16 @@ test("KV host RPC surface exposes public namespace methods and one internal tram
   ]);
 });
 
-test("ASSETS host RPC surface exposes only url", async () => {
+test("ASSETS host RPC surface exposes url and fetch", async () => {
   const { Assets } = await importRepositoryModule("runtime/bindings/assets.js", [
     [/from "cloudflare:workers";/, `from ${JSON.stringify(CLOUDFLARE_WORKERS_URL)};`],
     [/import \{ buildAssetUrl \} from "runtime-lib";/, buildAssetUrlStub],
+    [/import \{ fetchAsset \} from "runtime-assets";/, "const fetchAsset = async () => new Response(null, { status: 404 });"],
   ]);
 
   assert.deepEqual(Object.getOwnPropertyNames(Assets.prototype).toSorted(), [
     "constructor",
+    "fetch",
     "url",
   ]);
 });
