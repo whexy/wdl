@@ -15,14 +15,18 @@ labels:
   platform: linux/amd64
 
 variables:
+  # The clone binds the local-path workspace. Keep the build on the lab
+  # runner while the campus VM has intermittent registry access.
   - &amd64
     kubernetes:
       nodeSelector:
         kubernetes.io/arch: amd64
+        kubernetes.io/hostname: k8s-3
   - &buildx
     kubernetes:
       nodeSelector:
         kubernetes.io/arch: amd64
+        kubernetes.io/hostname: k8s-3
       resources:
         requests:
           cpu: "2"
