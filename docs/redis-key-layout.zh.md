@@ -38,7 +38,7 @@ worker:session-policy:<ns>:<name>
 worker:session-policy-seq:<ns>:<name>
                                 String, 永久单调 session-policy restart event 序号分配器
 worker-versions:<ns>:<name>     ZSET, score=int version, member="v<int>"
-worker:<ns>:<name>:v:<int>      Hash, bundle bytes + __meta__
+worker:<ns>:<name>:v:<int>      Hash, bundle bytes + __meta__ + 可选 __assets__
 worker-delete-lock:<ns>:<name>  String EX 30, 每个 worker 的 delete critical-section lock；value 是 whole:<token> 或 version:<token>；DO owner resolution/claim 与 actor dispatch/storage-delete assertion 都会读取，且只有 whole 会 fence active storage
 do:owner:scope:<encoded scope>  String EX, authoritative DO owner lease
 do:owner:scope:<encoded scope>:generation
@@ -110,6 +110,8 @@ Pattern `slot` 是原始 wrangler pattern，例如 `/mcp` 或 `/mcp/*`；它也�
 示例省略了 `sessionPolicy`；Control 只为非默认的 `restart` policy 持久化该字段，字段缺失表示 `preserve`。session-policy 改名前持久化的 bundle 可能携带已退役的 `durableObjectRollout` 字段；routing 会把它按同一 mode enum 读取，新 deploy 只写 `sessionPolicy`。secret bump 会原样拷贝源 bundle 的 `__meta__`，因此旧字段可能随拷贝延续到改名后分配的新版本号；双读是长期合同，不是过渡期机制。
 
 Control 把 `__meta__` 写为 JSON object。Control-plane consumer 通过 `control/lib.js::parseBundleMeta()` 解析必需的 bundle metadata；malformed JSON、array 和 scalar 值都会以 `corrupt_meta` fail closed。Bundle 缺失的语义仍由具体 use site 持有：当 projection 变更、唯一性证明、lifecycle cleanup、workflow view 或 environment budget 必须消费 metadata 才能产生正确结果时，只要权威 route 或 index 仍指向该 bundle，缺失就 fail closed。Deploy discovery/link preflight 不把缺失归类为 `corrupt_meta`；watched commit 仍是权威检查，并以 `target_drift` 拒绝缺失的 pinned service target。
+
+带 assets deploy 的 version 还带 `__assets__` 字段：JSON ASSETS manifest `{"prefix":"assets/<ns>/<worker>/<token>/","files":{"<path>":{"contentType","etag","size"}}}`，由 Control 在与 `__meta__` 相同的 transaction 中写入（`shared/assets-manifest.js`）。redis-proxy 通过 `GET /runtime/assets` 把它提供给 runtime，并从 `/runtime/load` 中省略。Runtime 对其他任何形状 fail closed，包括 prefix 不属于该 hash 自身 namespace 和 worker 的情况。`__meta__` 和 `__assets__` 是保留的 module path。
 
 Routes、platform-domain exposure、crons、queue consumers、session policy mode、bindings、vars、exports、workflow definitions 和 asset prefixes 都是 version metadata。`workersDev: false` 表示显式关闭 platform-domain exposure；字段缺失表示启用。Rollback 本质上是 promote 一个旧的 immutable version。
 

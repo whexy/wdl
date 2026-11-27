@@ -108,7 +108,7 @@ Key families：
 | `namespaces` | Set | Control | gateway/control listing 使用的 active namespace gate，也是 delegated-token 碰撞检测的 best-effort 信号。 | worker lifecycle state 变化时更新；whole-worker delete 在没有 active worker 时移除该 namespace。Namespace-scoped resources 可以比这个 membership 活得更久。 |
 | `workers:<ns>` | Set | Control | worker lifecycle index。 | blocker 通过后，whole-worker delete 移除 member。 |
 | `worker-versions:<ns>:<worker>` | ZSET | Control | retained version index。 | referrer check 通过后，version delete 移除 member。 |
-| `worker:<ns>:<worker>:v:<n>` | Hash | Control | immutable bundle/version metadata 和 modules。 | 保留到 version/worker delete。 |
+| `worker:<ns>:<worker>:v:<n>` | Hash | Control | immutable bundle/version metadata、modules 和可选的 `__assets__` manifest。 | 保留到 version/worker delete。 |
 | `worker:<ns>:<worker>:next_version` | String counter | Control | logical worker name 的 monotonic next version number。 | whole-worker delete 后保留，保证 worker id 不复用。 |
 | `cron:seq:<ns>:<worker>` | String counter | Control | 永久 Cron generation 高水位。 | Cron projection 清空和 whole-worker delete 后仍保留，防止旧 slot ref 匹配重建 entry。 |
 | `worker:session-policy:<ns>:<worker>` | String | Control | 与 route flip 同事务提交的 active session policy `{version,mode,restartSequence}` projection。 | Whole-worker delete 删除；缺失 state 默认 `preserve`。 |

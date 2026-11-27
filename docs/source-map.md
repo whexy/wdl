@@ -38,6 +38,7 @@ are outside this map unless they own runtime or deployable service behavior.
 | `runtime/ai-client.js` | Tenant-realm AI facade source for `run()`, `models()`, OpenAI-compatible fetch, streaming, and WebSocket helpers. |
 | `runtime/bindings/workflow.js`, `runtime/workflows-client.js`, `runtime/dispatch/workflow-*.js`, `runtime/load/wrapper-generate.js` | Workflow binding-scoped identity enforcement and transport, facade materialization, dispatch facade, replay cache, and step semantics. |
 | `runtime/tail-worker.js` / `runtime/tail-forwarder.js` | Workerd tail capture plus activation-gated append path for `wdl tail`. |
+| `runtime/assets.js` | ASSETS manifest cache, Cloudflare-default asset matching, and anonymous origin reads, shared by pre-Worker serving and `env.ASSETS.fetch()`. |
 | `runtime/lib.js` | Pure runtime helpers such as bundle-to-worker-code, byte normalization, and dispatch body normalization. |
 | `control/index.js` | Thin HTTP dispatcher on system-runtime `:8082`; delegates to handlers after auth. |
 | `control/handlers/` | Endpoint handlers for deploy, promote, versions, workers, delete, secrets, hosts, reload, auth tokens, D1, R2, AI providers/credentials, workflows, and log tail. |
@@ -92,6 +93,7 @@ are outside this map unless they own runtime or deployable service behavior.
 | `shared/s3-retry.js` | Abortable, bounded transient retry policy for idempotent S3 POST operations, shared by runtime R2 and the s3-cleanup worker. |
 | `shared/s3-request.js` | S3 total request deadlines and streamed GET body lifetimes shared by Runtime R2, Control R2/ASSETS, and cleanup. |
 | `shared/s3-xml.js` | Shared S3 XML parsing helpers used by control R2, runtime R2, and system cleanup paths. |
+| `shared/assets-manifest.js` | Per-version ASSETS manifest grammar written by Control and read by runtime, plus `auto-trailing-slash` path resolution and `If-None-Match` matching. |
 | `shared/assets-token.js` | Canonical ASSETS deploy token and object-prefix generation shared by Control and cleanup validation. |
 | `shared/s3-cleanup-lifecycle.js` | Worker-delete S3 cleanup task ids, queue fields, canonical ASSETS prefixes, states, and outcomes shared by Control and the cleanup system worker. |
 | `shared/task-identity.js` | Cached env/ECS task identity and private endpoint resolution shared by D1 and DO ownership tiers. |

@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 
 use axum::extract::{Query, State};
+use axum::http::StatusCode;
 use axum::http::header::CONTENT_TYPE;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
@@ -11,6 +12,10 @@ use wdl_rust_common::worker_contract::worker_bundle_key;
 use crate::{AppError, AppResult, AppState};
 
 pub(crate) const RUNTIME_LOAD_MAGIC: &[u8] = b"WDLLOAD!";
+
+/// Bundle hash field holding the version's ASSETS manifest
+/// (`shared/assets-manifest.js`). The loader never reads it.
+pub(crate) const ASSETS_MANIFEST_FIELD: &str = "__assets__";
 
 fn runtime_load_content_type() -> &'static str {
     "application/vnd.wdl.runtime-load"
@@ -110,7 +115,7 @@ pub(crate) async fn runtime_load(
         .await?;
 
     let payload = encode_runtime_load(
-        bundle,
+        loader_bundle_entries(bundle),
         state
             .secret_decryptor()
             .decrypt_hash_entries(&ns_secrets_key, ns_secrets)?,
@@ -121,13 +126,98 @@ pub(crate) async fn runtime_load(
     Ok(([(CONTENT_TYPE, runtime_load_content_type())], payload).into_response())
 }
 
+/// The loader never reads the ASSETS manifest, so it is not shipped on cold load.
+fn loader_bundle_entries(bundle: HashEntries) -> HashEntries {
+    bundle
+        .into_iter()
+        .filter(|(field, _)| field != ASSETS_MANIFEST_FIELD)
+        .collect()
+}
+
+/// The manifest bytes Control wrote, or 204 when the version has none.
+/// Runtime owns the grammar check because it is the persisted-state reader
+/// that acts on it.
+fn runtime_assets_response(manifest: Option<Vec<u8>>) -> Response {
+    match manifest {
+        Some(bytes) => ([(CONTENT_TYPE, "application/json")], bytes).into_response(),
+        None => crate::empty(StatusCode::NO_CONTENT),
+    }
+}
+
+pub(crate) async fn runtime_assets(
+    State(state): State<AppState>,
+    Query(q): Query<RuntimeLoadParams>,
+) -> AppResult<Response> {
+    let key = bundle_key(&q.ns, &q.worker, &q.version)?;
+    let manifest: Option<Vec<u8>> = state
+        .with_control_redis(async |mut conn| {
+            redis::cmd("HGET")
+                .arg(&key)
+                .arg(ASSETS_MANIFEST_FIELD)
+                .query_async(&mut conn)
+                .await
+        })
+        .await?;
+    Ok(runtime_assets_response(manifest))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use axum::http::StatusCode;
-
     use super::*;
+
+    #[test]
+    fn assets_manifest_contract_matches_cross_language_fixture() {
+        let fixture: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../tests/fixtures/assets-manifest-contract.json"
+        ))
+        .unwrap();
+        assert_eq!(fixture["bundleField"], ASSETS_MANIFEST_FIELD);
+        let route = fixture["route"].as_str().unwrap();
+        assert_eq!(
+            crate::route_name(&axum::http::Method::GET, route),
+            "runtime_assets"
+        );
+    }
+
+    #[test]
+    fn runtime_load_omits_the_assets_manifest() {
+        let entries = loader_bundle_entries(vec![
+            ("__meta__".to_string(), b"{}".to_vec()),
+            (
+                ASSETS_MANIFEST_FIELD.to_string(),
+                b"{\"files\":{}}".to_vec(),
+            ),
+            ("worker.js".to_string(), b"export default {};".to_vec()),
+        ]);
+        let fields: Vec<&str> = entries.iter().map(|(field, _)| field.as_str()).collect();
+        assert_eq!(fields, ["__meta__", "worker.js"]);
+    }
+
+    #[tokio::test]
+    async fn runtime_assets_returns_manifest_bytes_or_204() {
+        let absent = runtime_assets_response(None);
+        assert_eq!(absent.status(), StatusCode::NO_CONTENT);
+        assert_eq!(
+            axum::body::to_bytes(absent.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .len(),
+            0
+        );
+
+        let present = runtime_assets_response(Some(b"{\"files\":{}}".to_vec()));
+        assert_eq!(present.status(), StatusCode::OK);
+        assert_eq!(present.headers()[CONTENT_TYPE], "application/json");
+        assert_eq!(
+            axum::body::to_bytes(present.into_body(), usize::MAX)
+                .await
+                .unwrap()
+                .as_ref(),
+            b"{\"files\":{}}"
+        );
+    }
 
     #[test]
     fn bundle_key_accepts_version_tag() {

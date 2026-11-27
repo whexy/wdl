@@ -200,7 +200,7 @@ Supported config surfaces:
 | `[vars]` | String, number, and boolean values are accepted and stringified into `env`; vars, namespace/worker secrets, runtime-injected binding env values, and binding-scoped Workflow identity props must fit WDL's headroomed workerd 1 MiB `workerLoader` env budget. |
 | `[[kv_namespaces]]` | `id` is a platform-local KV namespace id, not a Cloudflare UUID. |
 | `[[r2_buckets]]` | `binding` plus `bucket_name` become a namespace-scoped virtual R2 bucket under the platform S3 bucket. |
-| `[assets]` | `directory` contents upload to S3-compatible assets storage and auto-inject `ASSETS`. |
+| `[assets]` | `directory` contents upload to S3-compatible assets storage and auto-inject `ASSETS`; runtime serves them before the Worker with Cloudflare's defaults. `run_worker_first` is accepted but not forwarded, so it always behaves as `false`: every declared asset is public ahead of the Worker. |
 | `[[d1_databases]]` | Binding resolves by `database_id` first, then namespace-local `database_name`; migrations use matching config. |
 | `[[durable_objects.bindings]]` | Same-worker classes from `[[migrations]].new_classes` or `new_sqlite_classes`; `script_name` and rename/delete migrations are unsupported. |
 | `[[services]]` | Freezes target namespace, worker, version, and entrypoint at caller deploy time. Cross-namespace `ns` is a WDL extension and requires target opt-in. |

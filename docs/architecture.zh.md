@@ -96,7 +96,7 @@ Stateful binding 调用：
 - Workflow facade 调 workflows。workflows 拥有 DB 2 instance state，并通过 `:8088` 把 run dispatch 回 runtime。
 - Queue producer 经 redis-proxy 写 DB 1，并先经过 runtime-side cap。
 - R2 在 runtime 使用平台 S3-compatible credential 访问可变 tenant object data。
-- ASSETS 是 control 在 deploy 时上传的 immutable deploy artifact；runtime 只根据 bundle metadata 和 `ASSETS_CDN_BASE` 构造 tokenized CDN URL。
+- ASSETS 是 control 在 deploy 时连同每个 version 的 manifest 上传的 immutable deploy artifact；runtime 读取 public-read asset origin，在 Worker 之前和通过 `env.ASSETS.fetch()` 提供它们，并根据 `ASSETS_CDN_BASE` 构造 tokenized CDN URL。
 - KV 使用 redis-proxy DB 1 key family；service 和 platform binding 是 isolate 内 JSRPC surface，其 ACL 和 target metadata 由 control/runtime 解析。
 - AI facade 通过 co-located redis-proxy 原子读取 DB 0 provider/credential snapshot，再使用专用 public-only network binding 访问 allowlist 中的官方 provider。Credential 只留在 host code；tenant code 获得生成的 `run()` / `models()` facade 和 OpenAI-compatible `fetch()` surface。
 
