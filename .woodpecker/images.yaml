@@ -65,7 +65,7 @@ clone:
 steps:
   # The Dockerfiles copy licenses/third-party/; upstream generates it first.
   - name: licenses
-    image: node:24-bookworm-slim
+    image: node:24-bookworm
     backend_options: *amd64
     commands:
       - |
