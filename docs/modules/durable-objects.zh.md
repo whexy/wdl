@@ -45,6 +45,8 @@ DO RPC method name 使用 JavaScript identifier grammar，do-runtime protocol re
 
 do-runtime 会通过 generated wrapper 截获的私有 fetch dispatch 调用 tenant alarm 和 RPC method；这些 request 携带外层 request id，使 host facade 可以传播该 id，且不会把平台 metadata 加入 tenant argument list。持久化 class instance 使用一个小型可变诊断 context，因此 concurrent 或 re-entrant call 可能观察到另一次 invocation 的 id。嵌套 DO fetch/connect request 会丢弃 tenant 提供的 `x-request-id`，并在 context id 可用时传播其净化值；request id 仍是 best-effort、不可信的诊断 metadata。
 
+生成的 do-runtime wrapper 会重新导出 user module 的全部 export（包括 `default`），因此 Durable Object 内的 `ctx.exports` 与 Worker 的 export 一致，`ctx.exports.default` 会回环到 Worker 的 default handler；该回环 handler 获得与其他 entrypoint 相同的 host-wrapped env。
+
 DO invoke envelope 通过 canonical namespace、worker、version 和 storage id 标识 persisted bundle，不接受 inline worker source。
 
 Tenant-facing DO object name/id 必须是 well-formed Unicode string。`idFromName()` / `idFromString()` 会在 hash 或 dispatch 前拒绝 lone UTF-16 surrogate；do-runtime alarm ingress 和 Workflows revalidation 执行相同边界。Binding-scoped native Fetcher 在两段 object-name header hop 上使用同一套 canonical、可逆的 ASCII encoding，因此 HTTP header normalization 不会在原始 identity 到达 do-runtime validation 前裁剪空白或拒绝 Unicode。

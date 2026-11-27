@@ -27,6 +27,39 @@ const DO_INTRINSIC_GUARD_WORKER = readFileSync(
   "utf8"
 );
 
+const DO_CTX_EXPORTS_WORKER = `
+import { DurableObject } from "cloudflare:workers";
+
+export class Loopback extends DurableObject {
+  constructor(ctx, env) {
+    super(ctx, env);
+    this.constructorHasDefault = "default" in ctx.exports;
+  }
+
+  async fetch() {
+    const response = await this.ctx.exports.default.fetch("https://loopback.internal/?echo=from-do");
+    return Response.json({
+      constructorHasDefault: this.constructorHasDefault,
+      status: response.status,
+      body: await response.json(),
+    });
+  }
+}
+
+export default {
+  fetch(request, env) {
+    const echo = new URL(request.url).searchParams.get("echo");
+    if (echo) {
+      return Response.json({
+        echo,
+        internalAlarmBindingVisible: Object.hasOwn(env, "__WDL_DO_ALARMS__"),
+      });
+    }
+    return env.LOOPBACK.get(env.LOOPBACK.idFromName("main")).fetch(request);
+  },
+};
+`;
+
 test("Durable Object fetch preserves headers above 64 KiB and 16 KiB URLs", async () => {
   const ns = uniqueNs("do-metadata");
   await deployAndPromote(ns, "probe", {
@@ -167,6 +200,26 @@ test("tenant top-level intrinsic patches cannot bypass host env wrapping", async
     doBackendVisible: false,
     ownerNetworkVisible: false,
     workflowsBackendVisible: false,
+  });
+});
+
+test("Durable Object ctx.exports.default loops back to the Worker default export", async () => {
+  const ns = uniqueNs("do-ctx-exports");
+  await deployAndPromote(ns, "loopback", {
+    mainModule: "worker.js",
+    modules: { "worker.js": DO_CTX_EXPORTS_WORKER },
+    bindings: {
+      LOOPBACK: { type: "do", className: "Loopback" },
+    },
+  });
+
+  const response = await gatewayFetch(ns, "/loopback");
+  const text = await response.text();
+  assert.equal(response.status, 200, text);
+  assert.deepEqual(responseJson({ body: text }), {
+    constructorHasDefault: true,
+    status: 200,
+    body: { echo: "from-do", internalAlarmBindingVisible: false },
   });
 });
 
