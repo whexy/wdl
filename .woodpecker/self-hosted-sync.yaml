@@ -1,0 +1,59 @@
+# Keeps main on top of upstream's latest release (wdl-dev/wdl). Runs daily
+# from the repository cron `self-hosted-sync` on branch main, or by hand.
+#
+# When upstream has released past main's base, scripts/self-hosted/sync.sh
+# rebases main's fork commits onto the release, pushes the result to
+# self-hosted-sync as the whexy-bot App, and opens or updates its pull
+# request into main. Merging it means pointing main at the result with a
+# leased force-push, which the pull request spells out; nothing here pushes
+# main or a release tag, so nothing deploys. Once main follows the release,
+# the next run closes any pull request left open.
+#
+# A failure reports to the secret `t3_repair_webhook`, a T3 Code scheduled
+# task's webhook URL, which starts an agent run that repairs main. Every run
+# logs one `state=` line: PUSHED, NOOP(current|older|pushed) or FAILED(stage).
+when:
+  - event: cron
+    cron: self-hosted-sync
+  - event: manual
+
+# The rebase needs main's history back to its upstream merge base.
+clone:
+  - name: git
+    image: woodpeckerci/plugin-git
+    settings:
+      partial: false
+      depth: 0
+
+steps:
+  - name: sync
+    image: node:24
+    environment:
+      GITHUB_APP_ID:
+        from_secret: github_app_id
+      GITHUB_APP_INSTALLATION_ID:
+        from_secret: github_app_installation_id
+      GITHUB_APP_PRIVATE_KEY:
+        from_secret: github_app_private_key
+    commands:
+      # The rebase rewrites the work tree, so the state machine runs from a copy.
+      - export STATE_DIR="$CI_WORKSPACE/.git/self-hosted-sync"
+      - mkdir -p "$STATE_DIR" && cp -R scripts/self-hosted "$STATE_DIR/scripts"
+      - git config user.name "whexy-bot[bot]"
+      - git config user.email "315421218+whexy-bot[bot]@users.noreply.github.com"
+      - token="$(node "$STATE_DIR/scripts/github.mjs" token)"
+      - export PUSH_URL="https://x-access-token:$token@github.com/$CI_REPO.git"
+      - bash "$STATE_DIR/scripts/sync.sh"
+
+  - name: report-failure
+    image: node:24
+    when:
+      status: failure
+    environment:
+      T3_REPAIR_WEBHOOK:
+        from_secret: t3_repair_webhook
+    commands:
+      - git rebase --abort 2>/dev/null || true
+      # From the commit this run started on: a stopped rebase lacks the fork's later commits.
+      - git show "$CI_COMMIT_SHA:scripts/self-hosted/report-failure.mjs" > /tmp/report-failure.mjs
+      - STATE_DIR="$CI_WORKSPACE/.git/self-hosted-sync" node /tmp/report-failure.mjs sync
